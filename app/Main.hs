@@ -1,11 +1,15 @@
+{-# LANGUAGE ExtendedDefaultRules #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
-module Main where
+module Main (main) where
 
-import Data.Text (Text)
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Shelly
 import System.Environment (getArgs)
+
+default (T.Text)
 
 main :: IO ()
 main = do
@@ -14,72 +18,66 @@ main = do
 
 updateAll :: Sh ()
 updateAll = do
-    Just home <- get_env "HOME"
-    cd $ home </> ("nixos" :: FilePath)
+    home <- fromMaybe (error "HOME env var not set") <$> get_env "HOME"
+    cd $ home </> "nixos"
 
-    withBinMaybe "git" $ \git -> run_ git ["pull"]
+    withBinMaybe "git" $ \git -> cmd git "pull"
 
-    runSudo_
+    cmd
+        "sudo"
         "nix-channel"
-        [ "--add"
-        , "https://nixos.org/channels/nixos-unstable"
-        , "nixos"
-        ]
-    run_
+        "--add"
+        "https://nixos.org/channels/nixos-unstable"
+        "nixos" ::
+        Sh ()
+
+    cmd
         "nix-channel"
-        [ "--add"
-        , "https://github.com/nix-community/home-manager/archive/master.tar.gz"
-        , "home-manager"
-        ]
+        "--add"
+        "https://github.com/nix-community/home-manager/archive/master.tar.gz"
+        "home-manager" ::
+        Sh ()
 
-    runSudo_ "nix-channel" ["--update"]
-    run_ "nix-channel" ["--update"]
+    cmd "sudo" "nix-channel" "--update" :: Sh ()
+    cmd "nix-channel" "--update" :: Sh ()
 
-    runSudo_ "nix-collect-garbage" ["--delete-older-than", "30d"]
-    runSudo_ "nixos-rebuild" ["switch", "--upgrade"]
-    run_ "home-manager" ["switch"]
+    cmd "sudo" "nix-collect-garbage" "--delete-older-than" "30d" :: Sh ()
+    cmd "sudo" "nixos-rebuild" "switch" "--upgrade" :: Sh ()
+    cmd "home-manager" "switch" :: Sh ()
 
     withBinMaybe "stack" $ \stack ->
-        run_
+        cmd
             stack
-            [ "install"
-            , "fourmolu"
-            , "--stack-yaml"
-            , T.pack $ home </> (".stack/global-project/stack.yaml" :: FilePath)
-            ]
+            "install"
+            "fourmolu"
+            "--stack-yaml"
+            (toTextIgnore $ home </> ".stack/global-project/stack.yaml")
 
     withBinMaybe "git" $ \git -> do
-        run_ git ["add", "-A"]
+        cmd git "add" "-A" :: Sh ()
         setenv "LANG" "C.UTF-8"
         commitMsg <-
-            run "git" ["-c", "color.status=false", "status"]
-                -|- run
+            cmd git "-c" "color.status=false" "status"
+                -|- cmd
                     "sed"
-                    [ "-n"
-                    , "-r"
-                    , "-e"
-                    , "1,/Changes to be committed:/ d"
-                    , "-e"
-                    , "1,1 d"
-                    , "-e"
-                    , "/^Untracked files:/,$ d"
-                    , "-e"
-                    , "s/^\\s*//"
-                    , "-e"
-                    , "/^\\(/ d"
-                    , "-e"
-                    , "/./p"
-                    ]
+                    "-n"
+                    "-r"
+                    "-e"
+                    "1,/Changes to be committed:/ d"
+                    "-e"
+                    "1,1 d"
+                    "-e"
+                    "/^Untracked files:/,$ d"
+                    "-e"
+                    "s/^\\s*//"
+                    "-e"
+                    "/^\\(/ d"
+                    "-e"
+                    "/./p"
+
         unless (T.null commitMsg) $ do
-            run_ git ["commit", "-m", commitMsg]
-            run_ git ["push"]
+            cmd git "commit" "-m" commitMsg :: Sh ()
+            cmd git "push"
 
 withBinMaybe :: FilePath -> (FilePath -> Sh ()) -> Sh ()
-withBinMaybe bin f = do
-    mbin <- which bin
-    case mbin of
-        Just b -> f b
-        Nothing -> return ()
-
-runSudo_ :: FilePath -> [Text] -> Sh ()
-runSudo_ fp args = run_ "sudo" (toTextIgnore fp : args)
+withBinMaybe bin f = which bin >>= maybe (return ()) f
