@@ -17,7 +17,7 @@ updateAll = do
     Just home <- get_env "HOME"
     cd $ home </> ("nixos" :: FilePath)
 
-    withGitMaybe $ \git -> run_ git ["pull"]
+    withBinMaybe "git" $ \git -> run_ git ["pull"]
 
     runSudo_
         "nix-channel"
@@ -39,7 +39,16 @@ updateAll = do
     runSudo_ "nixos-rebuild" ["switch", "--upgrade"]
     run_ "home-manager" ["switch"]
 
-    withGitMaybe $ \git -> do
+    withBinMaybe "stack" $ \stack ->
+        run_
+            stack
+            [ "install"
+            , "fourmolu"
+            , "--stack-yaml"
+            , T.pack $ home </> (".stack/global-project/stack.yaml" :: FilePath)
+            ]
+
+    withBinMaybe "git" $ \git -> do
         run_ git ["add", "-A"]
         setenv "LANG" "C.UTF-8"
         commitMsg <-
@@ -65,11 +74,11 @@ updateAll = do
             run_ git ["commit", "-m", commitMsg]
             run_ git ["push"]
 
-withGitMaybe :: (FilePath -> Sh ()) -> Sh ()
-withGitMaybe f = do
-    mgit <- which "git"
-    case mgit of
-        Just git -> f git
+withBinMaybe :: FilePath -> (FilePath -> Sh ()) -> Sh ()
+withBinMaybe bin f = do
+    mbin <- which bin
+    case mbin of
+        Just b -> f b
         Nothing -> return ()
 
 runSudo_ :: FilePath -> [Text] -> Sh ()
